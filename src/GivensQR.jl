@@ -1,15 +1,12 @@
 module GivensQR
 
-
-export givensqr, Q_op
-
+export givensqr_op
 
 using SparseArrays, LinearAlgebra, LinearOperators
 
-
 mutable struct GivensQR_model{T}
-    m ::Int
-    n ::Int
+    nrows ::Int
+    ncols ::Int
     rows ::Array{Int}
     cols ::Array{Int}
     cosines ::Array{T}
@@ -18,14 +15,13 @@ mutable struct GivensQR_model{T}
     rank ::Int
 end
 
-
-function givensqr(R ::SparseMatrixCSC)
+function qr(R :: SparseMatrixCSC{T,Ti}) where {Ti <: Integer, T}
     m = R.m
     n = R.n
-    rows = []
-    cols = []
-    cosines = []
-    sines = []
+    rows = Int[]
+    cols = Int[]
+    cosines = T[]
+    sines = T[]
     k = min(m,n)
     no_null_col = n
     col_perm = AbstractArray{Int}(1:n)
@@ -34,85 +30,112 @@ function givensqr(R ::SparseMatrixCSC)
     for j = 1:min(k, no_null_col)
 
         while (no_null_col > j && R[j:m,j].nzind == [])
-            aux1 = R[:,j]
-            R[:,j] = R[:,no_null_col]
-            R[:,no_null_col] = aux1
 
-            aux2 = col_perm[j]
+            aux = col_perm[j]
             col_perm[j] = col_perm[no_null_col]
-            col_perm[no_null_col] = aux2
+            col_perm[no_null_col] = aux
 
             no_null_col -= 1
         end
 
-        for i in R[:,j].nzind
-            if i > j && R[i,j] != 0
-                c = R[j,j]
-                s = R[i,j]
-                r = sqrt(c*c + s*s)
+        for i in R[:,col_perm[j]].nzind
+            if i > j
+                c = R[col_perm[j],col_perm[j]]
+                s = R[i,col_perm[j]]
+                r = -1 * sqrt(c*c + s*s)
                 c = c/r
                 s = s/r
                 row_i = R[i,:]
-                row_j = R[j,:]
-                R[j,:] = c*row_j + s*row_i
+                row_j = R[col_perm[j],:]
+                R[col_perm[j],:] = c*row_j + s*row_i
                 R[i,:] = -s*row_j + c*row_i
                 R[i,j] = 0
 
-                rows = vcat(rows, [i])
-                cols = vcat(cols, [j])
-                cosines = vcat(cosines, [c])
-                sines = vcat(sines, [s])
+                push!(rows, i)
+                push!(cols, j)
+                push!(cosines, c)
+                push!(sines, s)
             end
         end
     end
 
-    i = 1
-    while !(i > k || R[i,i] == 0)
-        i += 1
-        rank += 1
-    end
-
-    rows = convert(Array{Int}, rows)
-    cols = convert(Array{Int}, cols)
-    cosines = convert(Array{Float64}, cosines)
-    sines = convert(Array{Float64}, sines)
-
-    return GivensQR_model(m, n, rows, cols, cosines, sines, col_perm, rank)
+    return GivensQR_model(m, n, rows, cols, cosines, sines, col_perm, min(k, no_null_col))
 end
 
+function qr(R :: Matrix{T}) where  T
+    m, n = size(R)
+    rows = Int[]
+    cols = Int[]
+    cosines = T[]
+    sines = T[]
+    k = min(m,n)
+    no_null_col = n
+    col_perm = AbstractArray{Int}(1:n)
+    rank = 0
 
-function Q_op(G ::GivensQR_model, x)
-    m = G.m
-    n = G.n
+    for j = 1:min(k, no_null_col)
+
+        while (no_null_col > j && norm(R[j:m,j], Inf) < 1e-14)
+
+            aux = col_perm[j]
+            col_perm[j] = col_perm[no_null_col]
+            col_perm[no_null_col] = aux
+
+            no_null_col -= 1
+        end
+
+        for i = 1:m
+            if i > j && R[i, col_perm[j]] >= 1e-14
+                c = R[col_perm[j],col_perm[j]]
+                s = R[i,col_perm[j]]
+                r = -1 * sqrt(c*c + s*s)
+                c = c/r
+                s = s/r
+                row_i = R[i,:]
+                row_j = R[col_perm[j],:]
+                R[col_perm[j],:] = c*row_j + s*row_i
+                R[i,:] = -s*row_j + c*row_i
+                R[i,j] = 0
+
+                push!(rows, i)
+                push!(cols, j)
+                push!(cosines, c)
+                push!(sines, s)
+            end
+        end
+    end
+
+    return GivensQR_model(m, n, rows, cols, cosines, sines, col_perm, min(k, no_null_col))
+end
+
+function givensqr_op(G :: GivensQR_model{T}, x :: AbstractVector{S}) where {T,S}
+    m = G.nrows
+    n = G.ncols
     rank = G.rank
     cols = G.cols
     rows = G.rows
     sines = G.sines
     cosines = G.cosines
     p = length(cols)
+    y = similar(x, promote_type(T, S))
+    y .= x
 
     for k = p:-1:1
         i = rows[k]
         j = cols[k]
         c = cosines[k]
         s = sines[k]
-        xi = x[i]
-        xj = x[j]
-        x[i] = c*xi  + s*xj
-        x[j] = -s*xi + c*xj
+        yi = y[i]
+        yj = y[j]
+        y[i] = c*yi  + s*yj
+        y[j] = -s*yi + c*yj
     end
 
-    return x
+    return y
 end
 
-
-# i will change Q_op to nullspace_op and t_nullspace_op
-function Q_op(A ::SparseMatrixCSC)
-    G = givensqr(A)
-    Q = LinearOperator(Float64, A.m, A.m, false, false, v -> Q_op(G, v))
-
-    return Q, G.col_perm
+function givensqr_op(G :: GivensQR_model{T}) where T
+    return LinearOperator(T, G.nrows, G.nrows, false, false, x -> givensqr_op(G, x))
 end
-
 
 end # module

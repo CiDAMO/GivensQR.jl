@@ -3,6 +3,9 @@ uuid = "54ae6570-0fa4-11ea-0aeb-efea70a729fa"
 authors = ["rodrigoredondo <rodrigoredondo0@gmail.com>"]
 version = "0.1.0"
 
+[compat]
+LinearOperators = "≥ 0.5"
+
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LinearOperators = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
